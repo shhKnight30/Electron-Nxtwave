@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Database
+data/database.sqlite
+data/database.sqlite-journal
+
+# Build outputs
+dist/
+build/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Audio cache
+data/audio_cache/*.mp3
+data/audio_cache/*.wav
+
+# Models (keep structure, ignore large files)
+models/*.bin
+models/*.gguf
+models/*.safetensors
+

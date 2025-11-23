@@ -1,24 +1,54 @@
-// Express server
-
-// backend/server.js
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const compression = require('compression');
 const rateLimit = require('express-rate-limit');
-const { initDatabase } = require('./config/database');
+const path = require('path');
+
+
+
+
+// Import routes
+const authRoutes = require('./routes/auth');
+const studyRoutes = require('./routes/study');
+const voiceRoutes = require('./routes/voice');
+const mentalHealthRoutes = require('./routes/mentalHealth');
+const plannerRoutes = require('./routes/planner');
+const chatRoutes = require('./routes/chat');
+
+
+// Import middleware
 const errorHandler = require('./middleware/errorHandler');
 
+// Import database
+const { initDatabase } = require('./config/database');
+
 const app = express();
+app.use(express.json());
+app.use('/api/chat', chatRoutes);
+
+
 const PORT = process.env.PORT || 3001;
 
-// Middleware
+// Initialize database
+initDatabase();
+
+//play
+app.use("/audio", express.static(path.join(__dirname, "temp_audio")));
+
+
+// Security middleware
 app.use(helmet());
-app.use(cors());
 app.use(compression());
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// CORS
+app.use(cors({
+  origin: ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002', 'http://localhost:3003'],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 
 // Rate limiting
 const limiter = rateLimit({
@@ -27,32 +57,52 @@ const limiter = rateLimit({
 });
 app.use('/api/', limiter);
 
-// Routes
-app.use('/api/auth', require('./routes/auth'));
-app.use('/api/study', require('./routes/study'));
-app.use('/api/voice', require('./routes/voice'));
-app.use('/api/mental-health', require('./routes/mentalHealth'));
-app.use('/api/planner', require('./routes/planner'));
+// Body parsing
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Static files
+app.use('/uploads', express.static(path.join(__dirname, '../data/uploads')));
 
 // Health check
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() });
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Error handler
+// API Routes
+app.use('/api/auth', authRoutes);
+app.use('/api/study', studyRoutes);
+app.use('/api/voice', voiceRoutes);
+app.use('/api/mental-health', mentalHealthRoutes);
+app.use('/api/planner', plannerRoutes);
+
+// Error handling
 app.use(errorHandler);
 
-// Initialize database and start server
-initDatabase()
-  .then(() => {
-    app.listen(PORT, () => {
-      console.log(`✅ Backend server running on http://localhost:${PORT}`);
-      console.log(`✅ Database initialized`);
-    });
-  })
-  .catch((error) => {
-    console.error('❌ Failed to initialize database:', error);
-    process.exit(1);
-  });
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({ error: 'Route not found' });
+});
 
-module.exports = app;
+// Start server
+const server = app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`📡 API available at http://localhost:${PORT}/api`);
+  console.log(`🏥 Health check at http://localhost:${PORT}/health`);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM signal received: closing HTTP server');
+  server.close(() => {
+    console.log('HTTP server closed');
+  });
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT signal received: closing HTTP server');
+  server.close(() => {
+    console.log('HTTP server closed');
+    process.exit(0);
+  });
+});

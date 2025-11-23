@@ -76,4 +76,4 @@ exports.generateQuiz = async (text, count = 5) => {
 exports.answerQuestion = async (question) => {
   const prompt = `Answer this question clearly and concisely:\n\n${question}`;
   return await generateCompletion(prompt);
-};node
+}

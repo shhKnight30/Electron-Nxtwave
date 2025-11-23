@@ -1,0 +1,2 @@
+// Mental health dashboard component
+

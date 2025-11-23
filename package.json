@@ -1,0 +1,22 @@
+{
+  "name": "ai-study-assistant",
+  "version": "1.0.0",
+  "description": "Hybrid AI Study Assistant",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "concurrently \"npm run backend\" \"npm run frontend\" \"npm run electron:wait\"",
+    "backend": "cd backend && npm start",
+    "frontend": "cd frontend && BROWSER=none npm start",
+    "electron": "electron .",
+    "electron:wait": "wait-on http://localhost:3000 http://localhost:3001 && electron .",
+    "dev": "NODE_ENV=development npm start",
+    "build": "cd frontend && npm run build",
+    "package": "electron-builder"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "electron": "^39.2.3",
+    "electron-builder": "^24.9.1",
+    "wait-on": "^7.2.0"
+  }
+}
