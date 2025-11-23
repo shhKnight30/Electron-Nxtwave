@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, Square, Volume2, Loader, MessageSquare } from 'lucide-react';
+import { Mic, Square, Volume2, Loader, MessageSquare, Radio } from 'lucide-react';
 import api from '../../services/api';
 import toast from 'react-hot-toast';
 
@@ -11,15 +11,22 @@ const VoiceInput = () => {
     const [interimTranscript, setInterimTranscript] = useState('');
     const [uploading, setUploading] = useState(false);
     const fileInputRef = useRef(null);
-
+    
     // AI Response State
     const [aiResponse, setAiResponse] = useState('');
     const [gettingAiResponse, setGettingAiResponse] = useState(false);
 
+    // Wake Word State
+    const [wakeWordEnabled, setWakeWordEnabled] = useState(false);
+    const [wakeWordListening, setWakeWordListening] = useState(false);
+    const [wakeWord, setWakeWord] = useState('hey electron');
+    const [sensitivity, setSensitivity] = useState(0.85);
+
     const recognitionRef = useRef(null);
+    const wakeWordRecognitionRef = useRef(null);
     const synthRef = useRef(window.speechSynthesis);
 
-    // Initialize Web Speech API
+    // Initialize Web Speech API for main voice input
     useEffect(() => {
         if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -49,7 +56,9 @@ const VoiceInput = () => {
 
             recognitionRef.current.onerror = (event) => {
                 console.error('Speech recognition error:', event.error);
-                toast.error('Speech recognition error: ' + event.error);
+                if (event.error !== 'no-speech') {
+                    toast.error('Speech recognition error: ' + event.error);
+                }
                 setListening(false);
             };
 
@@ -69,16 +78,112 @@ const VoiceInput = () => {
         };
     }, [listening]);
 
-    // Get AI Response from Backend
+    // Initialize Wake Word Detection
+    useEffect(() => {
+        if (!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {
+            return;
+        }
+
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        wakeWordRecognitionRef.current = new SpeechRecognition();
+        wakeWordRecognitionRef.current.continuous = true;
+        wakeWordRecognitionRef.current.interimResults = false;
+        wakeWordRecognitionRef.current.lang = 'en-US';
+
+        wakeWordRecognitionRef.current.onresult = (event) => {
+            const lastResult = event.results[event.results.length - 1];
+            const spokenText = lastResult[0].transcript.toLowerCase().trim();
+            const confidence = lastResult[0].confidence;
+
+            console.log('Wake word detection:', spokenText, 'Confidence:', confidence);
+
+            // Improved wake word matching
+            const wakeWordLower = wakeWord.toLowerCase();
+            
+            // Check for exact match or close variations
+            const exactMatch = spokenText === wakeWordLower;
+            const containsMatch = spokenText.includes(wakeWordLower);
+            
+            // Also check word-by-word similarity
+            const wakeWordParts = wakeWordLower.split(' ');
+            const spokenParts = spokenText.split(' ');
+            const wordMatch = wakeWordParts.every(word => 
+                spokenParts.some(spoken => spoken.includes(word) || word.includes(spoken))
+            );
+
+            const isWakeWordDetected = exactMatch || (containsMatch && confidence >= sensitivity) || 
+                                      (wordMatch && confidence >= sensitivity - 0.1);
+
+            if (isWakeWordDetected) {
+                console.log('✅ Wake word "' + wakeWord + '" detected!');
+                toast.success(`🎤 Wake word "${wakeWord}" detected!`);
+                startListening();
+            }
+        };
+
+        wakeWordRecognitionRef.current.onerror = (event) => {
+            if (event.error !== 'no-speech' && event.error !== 'aborted') {
+                console.error('Wake word detection error:', event.error);
+            }
+        };
+
+        wakeWordRecognitionRef.current.onend = () => {
+            // Restart wake word listening if still enabled
+            if (wakeWordEnabled && wakeWordListening) {
+                try {
+                    wakeWordRecognitionRef.current.start();
+                } catch (e) {
+                    console.log('Wake word restart delayed');
+                    setTimeout(() => {
+                        if (wakeWordEnabled && wakeWordListening) {
+                            wakeWordRecognitionRef.current.start();
+                        }
+                    }, 100);
+                }
+            }
+        };
+
+        return () => {
+            if (wakeWordRecognitionRef.current) {
+                wakeWordRecognitionRef.current.stop();
+            }
+        };
+    }, [wakeWord, sensitivity, wakeWordEnabled, wakeWordListening]);
+
+    // Start/Stop Wake Word Listening
+    const toggleWakeWord = () => {
+        if (!wakeWordEnabled) {
+            // Enable wake word
+            setWakeWordEnabled(true);
+            setWakeWordListening(true);
+            try {
+                wakeWordRecognitionRef.current.start();
+                toast.success(`👂 Listening for "${wakeWord}"...`);
+            } catch (error) {
+                console.error('Failed to start wake word:', error);
+                toast.error('Failed to start wake word detection');
+                setWakeWordEnabled(false);
+                setWakeWordListening(false);
+            }
+        } else {
+            // Disable wake word
+            setWakeWordEnabled(false);
+            setWakeWordListening(false);
+            if (wakeWordRecognitionRef.current) {
+                wakeWordRecognitionRef.current.stop();
+            }
+            toast.success('Wake word detection stopped');
+        }
+    };
+
     // Get AI Response from Backend
     const getAiResponse = async (text) => {
         setGettingAiResponse(true);
         try {
             console.log('Sending to AI:', text);
-
-            // Use /voice/query endpoint (already exists in your backend)
+            
             const response = await api.post('/voice/query', {
-                text: text,  // Changed from 'message' to 'text'
+                text: text,
                 useOnline: false
             });
 
@@ -87,10 +192,10 @@ const VoiceInput = () => {
             const aiReply = response.data.response;
             setAiResponse(aiReply);
             toast.success('🤖 AI responded!');
-
+            
             // Auto-play AI response
             speakText(aiReply);
-
+            
         } catch (error) {
             console.error('Error getting AI response:', error);
             toast.error(error.response?.data?.error || 'Failed to get AI response');
@@ -101,10 +206,16 @@ const VoiceInput = () => {
 
     const startListening = async () => {
         try {
+            // Stop wake word detection temporarily
+            if (wakeWordEnabled && wakeWordRecognitionRef.current) {
+                wakeWordRecognitionRef.current.stop();
+                setWakeWordListening(false);
+            }
+
             setListening(true);
             setTranscript('');
             setInterimTranscript('');
-            setAiResponse(''); // Clear previous AI response
+            setAiResponse('');
 
             // Start backend session
             const response = await api.post('/voice/start');
@@ -119,19 +230,23 @@ const VoiceInput = () => {
             console.error('Error starting voice:', error);
             toast.error('Failed to start listening');
             setListening(false);
+            
+            // Resume wake word if it was enabled
+            if (wakeWordEnabled) {
+                setWakeWordListening(true);
+                wakeWordRecognitionRef.current.start();
+            }
         }
     };
 
     const stopListening = async () => {
         try {
-            console.log('=== STOP LISTENING DEBUG ===');
-            console.log('Current transcript:', transcript);
-            console.log('Current interim:', interimTranscript);
-
-            // Capture transcript BEFORE stopping
+            console.log('=== STOP LISTENING ===');
+            console.log('Transcript:', transcript);
+            console.log('Interim:', interimTranscript);
+            
             const finalTranscript = (transcript + ' ' + interimTranscript).trim();
-            console.log('Final transcript:', finalTranscript);
-            console.log('Transcript length:', finalTranscript.length);
+            console.log('Final:', finalTranscript);
 
             // Stop browser speech recognition
             if (recognitionRef.current) {
@@ -142,8 +257,15 @@ const VoiceInput = () => {
             setInterimTranscript('');
 
             if (!finalTranscript) {
-                console.log('ERROR: Empty transcript!');
-                toast.error('No speech detected. Try speaking longer or check mic permissions.');
+                toast.error('No speech detected. Try speaking longer.');
+                
+                // Resume wake word listening if enabled
+                if (wakeWordEnabled) {
+                    setWakeWordListening(true);
+                    setTimeout(() => {
+                        wakeWordRecognitionRef.current.start();
+                    }, 500);
+                }
                 return;
             }
 
@@ -159,17 +281,32 @@ const VoiceInput = () => {
             setProcessing(false);
             setSessionId(null);
 
-            // Get AI response automatically
+            // Get AI response
             await getAiResponse(finalTranscript);
+
+            // Resume wake word listening after processing
+            if (wakeWordEnabled) {
+                setTimeout(() => {
+                    setWakeWordListening(true);
+                    wakeWordRecognitionRef.current.start();
+                }, 1000);
+            }
 
         } catch (error) {
             console.error('Error stopping voice:', error);
             toast.error('Failed to process speech');
             setProcessing(false);
+            
+            // Resume wake word on error
+            if (wakeWordEnabled) {
+                setWakeWordListening(true);
+                setTimeout(() => {
+                    wakeWordRecognitionRef.current.start();
+                }, 500);
+            }
         }
     };
 
-    // Speak any text (for playing back transcript or AI response)
     const speakText = (text) => {
         if (!text) {
             toast.error('No text to speak');
@@ -220,7 +357,7 @@ const VoiceInput = () => {
         }
 
         setUploading(true);
-
+        
         try {
             const formData = new FormData();
             formData.append('audio', file);
@@ -236,10 +373,9 @@ const VoiceInput = () => {
             const transcribedText = response.data.text;
             setTranscript(transcribedText);
             toast.success(`✅ Transcribed with ${response.data.service}`);
-
-            // Get AI response for uploaded audio
+            
             await getAiResponse(transcribedText);
-
+            
         } catch (error) {
             console.error('Upload error:', error);
             toast.error('Failed to transcribe audio file');
@@ -273,6 +409,70 @@ const VoiceInput = () => {
                         Clear
                     </button>
                 )}
+            </div>
+
+            {/* Wake Word Settings */}
+            <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+                <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-xl font-semibold text-white flex items-center gap-2">
+                        <Radio className="text-purple-400" />
+                        Wake Word Detection
+                    </h2>
+                    <button
+                        onClick={toggleWakeWord}
+                        className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                            wakeWordEnabled
+                                ? 'bg-green-600 hover:bg-green-700 text-white'
+                                : 'bg-slate-700 hover:bg-slate-600 text-white'
+                        }`}
+                    >
+                        {wakeWordEnabled ? '✓ Enabled' : 'Enable Wake Word'}
+                    </button>
+                </div>
+
+                {wakeWordListening && (
+                    <div className="mb-4 p-3 bg-green-900/30 border border-green-500/50 rounded-lg">
+                        <p className="text-green-400 text-sm flex items-center gap-2">
+                            <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
+                            Listening for wake word: "{wakeWord}"
+                        </p>
+                    </div>
+                )}
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label className="block text-sm font-medium text-slate-300 mb-2">
+                            Wake Word
+                        </label>
+                        <input
+                            type="text"
+                            value={wakeWord}
+                            onChange={(e) => setWakeWord(e.target.value)}
+                            className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white"
+                            placeholder="hey assistant"
+                            disabled={wakeWordEnabled}
+                        />
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-slate-300 mb-2">
+                            Sensitivity: {sensitivity.toFixed(2)}
+                        </label>
+                        <input
+                            type="range"
+                            min="0.5"
+                            max="0.95"
+                            step="0.05"
+                            value={sensitivity}
+                            onChange={(e) => setSensitivity(parseFloat(e.target.value))}
+                            className="w-full"
+                            disabled={wakeWordEnabled}
+                        />
+                        <p className="text-xs text-slate-400 mt-1">
+                            Higher = more accurate (0.85 recommended for "Hey Electron")
+                        </p>
+                    </div>
+                </div>
             </div>
 
             <div className="bg-slate-800 rounded-xl p-8 border border-slate-700">
@@ -378,7 +578,10 @@ const VoiceInput = () => {
                         ) : (
                             <div className="flex items-center justify-center h-full">
                                 <p className="text-slate-400 italic text-center">
-                                    Click the microphone button to start
+                                    {wakeWordEnabled 
+                                        ? `Say "${wakeWord}" or click the microphone`
+                                        : 'Click the microphone button to start'
+                                    }
                                 </p>
                             </div>
                         )}
@@ -420,12 +623,12 @@ const VoiceInput = () => {
                 <div className="mt-6 p-4 bg-slate-900 rounded-lg border border-slate-700">
                     <h3 className="text-white font-medium mb-2">How to use:</h3>
                     <ul className="text-slate-400 text-sm space-y-1">
-                        <li>✓ Click the <span className="text-red-400">red microphone</span> to start recording</li>
-                        <li>✓ Speak your question or message clearly</li>
-                        <li>✓ Click the <span className="text-slate-300">square button</span> to stop</li>
-                        <li>✓ AI will automatically respond to your speech</li>
-                        <li>✓ Click <span className="text-blue-400">speaker icon</span> to replay your speech</li>
-                        <li>✓ Upload audio files for transcription + AI response</li>
+                        <li>✓ Enable wake word and say "{wakeWord}" anytime to activate</li>
+                        <li>✓ Or click the <span className="text-red-400">red microphone</span> manually</li>
+                        <li>✓ Speak your question clearly</li>
+                        <li>✓ Click <span className="text-slate-300">square button</span> to stop or wait for auto-stop</li>
+                        <li>✓ AI will automatically respond</li>
+                        <li>✓ Wake word detection resumes after each interaction</li>
                     </ul>
                 </div>
 
