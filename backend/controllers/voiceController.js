@@ -29,45 +29,42 @@ const upload = multer({
 const activeSessions = new Map();
 
 // Process voice query
+// Process voice query - OFFLINE ONLY
 exports.processVoiceQuery = async (req, res) => {
   try {
-    const { text, useOnline } = req.body;
+    const { text, prompt } = req.body;
+    const queryText = text || prompt; // 👈 allow both
 
-    if (!text) {
-      return res.status(400).json({ error: 'Text is required' });
+    if (!queryText || queryText.trim() === "") {
+      return res.status(400).json({ error: 'No query provided' });
     }
 
+    console.log('Processing voice query:', queryText);
+
+    // Save to history
     await runQuery(
       'INSERT INTO search_history (user_id, query, search_type) VALUES (?, ?, ?)',
-      [req.userId, text, 'voice']
+      [req.userId, queryText, 'voice']
     );
 
-    let response;
-    let service;
-
-    if (useOnline && process.env.OPENAI_API_KEY) {
-      try {
-        response = await openaiService.answerQuestion(text);
-        service = 'openai';
-      } catch (error) {
-        response = await ollamaService.answerQuestion(text);
-        service = 'ollama';
-      }
-    } else {
-      response = await ollamaService.answerQuestion(text);
-      service = 'ollama';
-    }
+    // ⚙️ ALWAYS use Ollama (offline)
+    const response = await ollamaService.answerQuestion(queryText);
 
     res.json({
-      query: text,
+      query: queryText,
       response,
-      service
+      service: 'ollama'
     });
+
   } catch (error) {
     console.error('Process voice query error:', error);
-    res.status(500).json({ error: 'Failed to process voice query' });
+    res.status(500).json({ 
+      error: 'Failed to process voice query',
+      details: error.message 
+    });
   }
 };
+
 
 // NEW: Transcribe audio file with Whisper.cpp
 exports.transcribe = async (req, res) => {
@@ -321,5 +318,70 @@ exports.saveVoiceSettings = async (req, res) => {
   }
 };
 
+// Add these right before: exports.uploadAudio = upload.single('audio');
+
+// Wake word control
+exports.startWakeWord = async (req, res) => {
+  try {
+    // Placeholder for wake word - will implement later
+    res.json({
+      message: 'Wake word detection started (placeholder)',
+      status: {
+        isListening: false,
+        isAvailable: false,
+        wakeWord: 'hey study'
+      }
+    });
+  } catch (error) {
+    console.error('Start wake word error:', error);
+    res.status(500).json({ error: 'Failed to start wake word detection' });
+  }
+};
+
+exports.stopWakeWord = async (req, res) => {
+  try {
+    res.json({
+      message: 'Wake word detection stopped (placeholder)',
+      status: {
+        isListening: false,
+        isAvailable: false,
+        wakeWord: 'hey study'
+      }
+    });
+  } catch (error) {
+    console.error('Stop wake word error:', error);
+    res.status(500).json({ error: 'Failed to stop wake word detection' });
+  }
+};
+
+exports.getWakeWordStatus = async (req, res) => {
+  try {
+    res.json({
+      isListening: false,
+      isAvailable: false,
+      wakeWord: 'hey study'
+    });
+  } catch (error) {
+    console.error('Get wake word status error:', error);
+    res.status(500).json({ error: 'Failed to get status' });
+  }
+};
+
+// This should already be there - make sure it's the LAST line
+
 // Export upload middleware
-exports.uploadAudio = upload.single('audio');
+module.exports = {
+  uploadAudio: upload.single('audio'),
+  processVoiceQuery: exports.processVoiceQuery,
+  transcribe: exports.transcribe,
+  speak: exports.speak,
+  textSearch: exports.textSearch,
+  startRecording: exports.startRecording,
+  stopRecording: exports.stopRecording,
+  playAudio: exports.playAudio,
+  getVoiceSettings: exports.getVoiceSettings,
+  saveVoiceSettings: exports.saveVoiceSettings,
+  startWakeWord: exports.startWakeWord,
+  stopWakeWord: exports.stopWakeWord,
+  getWakeWordStatus: exports.getWakeWordStatus
+};

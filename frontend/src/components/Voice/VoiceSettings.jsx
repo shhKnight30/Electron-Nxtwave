@@ -5,7 +5,7 @@ import api from "../../services/api";
 
 const VoiceSettings = () => {
   const [settings, setSettings] = useState({
-    wakeWord: "hey study",
+    wakeWord: "electron",
     language: "en",
     sensitivity: 0.6,
     useOfflineSTT: true,

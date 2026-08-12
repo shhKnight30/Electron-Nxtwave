@@ -1,23 +1,34 @@
-// Ollama integration
-
-// backend/services/ollamaService.js
 const axios = require('axios');
 
 const OLLAMA_HOST = process.env.OLLAMA_HOST || 'http://localhost:11434';
-const MODEL = process.env.OLLAMA_MODEL || 'llama3';
+const MODEL = process.env.OLLAMA_MODEL || 'llama3.2';
+
+// Test Ollama connection
+async function testConnection() {
+  try {
+    const response = await axios.get(`${OLLAMA_HOST}/api/tags`);
+    console.log('✅ Ollama connected. Available models:', response.data.models.map(m => m.name).join(', '));
+    return true;
+  } catch (error) {
+    console.error('❌ Ollama not available:', error.message);
+    console.log('Please start Ollama: ollama serve');
+    return false;
+  }
+}
 
 // Generate completion
-async function generateCompletion(prompt) {
+async function generateCompletion(prompt, options = {}) {
   try {
     const response = await axios.post(`${OLLAMA_HOST}/api/generate`, {
       model: MODEL,
       prompt,
-      stream: false
+      stream: false,
+      ...options
     });
     return response.data.response;
   } catch (error) {
     console.error('Ollama error:', error.message);
-    throw new Error('Ollama service unavailable');
+    throw new Error('Ollama service unavailable. Make sure Ollama is running.');
   }
 }
 
@@ -33,7 +44,6 @@ exports.generateFlashcards = async (text, count = 5) => {
   const response = await generateCompletion(prompt);
   
   try {
-    // Try to parse JSON response
     const jsonMatch = response.match(/\[[\s\S]*\]/);
     if (jsonMatch) {
       return JSON.parse(jsonMatch[0]);
@@ -42,7 +52,6 @@ exports.generateFlashcards = async (text, count = 5) => {
     console.log('Failed to parse JSON, using fallback');
   }
   
-  // Fallback: create basic flashcards
   return Array.from({ length: count }, (_, i) => ({
     question: `Question ${i + 1} from the text`,
     answer: `Answer based on the content`,
@@ -64,7 +73,6 @@ exports.generateQuiz = async (text, count = 5) => {
     console.log('Failed to parse JSON, using fallback');
   }
   
-  // Fallback
   return Array.from({ length: count }, (_, i) => ({
     question: `Question ${i + 1}`,
     options: ['Option A', 'Option B', 'Option C', 'Option D'],
@@ -72,8 +80,13 @@ exports.generateQuiz = async (text, count = 5) => {
   }));
 };
 
-// Answer question
+// Answer question - MAIN FUNCTION FOR VOICE
 exports.answerQuestion = async (question) => {
-  const prompt = `Answer this question clearly and concisely:\n\n${question}\n\nAnswer:`;
+  const prompt = `You are a helpful AI assistant. Answer this question clearly and concisely:\n\nQuestion: ${question}\n\nAnswer:`;
   return await generateCompletion(prompt);
 };
+
+// Test connection on startup
+testConnection();
+
+module.exports = exports;

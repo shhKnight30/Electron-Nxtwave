@@ -4,13 +4,13 @@ import api from '../../services/api';
 import toast from 'react-hot-toast';
 
 const VoiceInput = () => {
+    // --- STATE MANAGEMENT ---
     const [listening, setListening] = useState(false);
     const [transcript, setTranscript] = useState('');
     const [processing, setProcessing] = useState(false);
     const [sessionId, setSessionId] = useState(null);
     const [interimTranscript, setInterimTranscript] = useState('');
     const [uploading, setUploading] = useState(false);
-    const fileInputRef = useRef(null);
     
     // AI Response State
     const [aiResponse, setAiResponse] = useState('');
@@ -22,232 +22,31 @@ const VoiceInput = () => {
     const [wakeWord, setWakeWord] = useState('hey electron');
     const [sensitivity, setSensitivity] = useState(0.85);
 
+    // --- REFS ---
+    const fileInputRef = useRef(null);
     const recognitionRef = useRef(null);
     const wakeWordRecognitionRef = useRef(null);
     const synthRef = useRef(window.speechSynthesis);
+    
+    // 🔧 FIX 1: Timer must be a ref to persist across renders
+    const silenceTimer = useRef(null); 
+    
+    // 🔧 FIX 2: Ref to hold the latest version of the stop function
+    const stopListeningRef = useRef(null);
 
-    // Initialize Web Speech API for main voice input
-    useEffect(() => {
-        if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-            recognitionRef.current = new SpeechRecognition();
-            recognitionRef.current.continuous = true;
-            recognitionRef.current.interimResults = true;
-            recognitionRef.current.lang = 'en-US';
 
-            recognitionRef.current.onresult = (event) => {
-                let interim = '';
-                let final = '';
-
-                for (let i = event.resultIndex; i < event.results.length; i++) {
-                    const transcript = event.results[i][0].transcript;
-                    if (event.results[i].isFinal) {
-                        final += transcript + ' ';
-                    } else {
-                        interim += transcript;
-                    }
-                }
-
-                if (final) {
-                    setTranscript(prev => prev + final);
-                }
-                setInterimTranscript(interim);
-            };
-
-            recognitionRef.current.onerror = (event) => {
-                console.error('Speech recognition error:', event.error);
-                if (event.error !== 'no-speech') {
-                    toast.error('Speech recognition error: ' + event.error);
-                }
-                setListening(false);
-            };
-
-            recognitionRef.current.onend = () => {
-                if (listening) {
-                    recognitionRef.current.start();
-                }
-            };
-        } else {
-            toast.error('Speech recognition not supported in this browser');
-        }
-
-        return () => {
-            if (recognitionRef.current) {
-                recognitionRef.current.stop();
-            }
-        };
-    }, [listening]);
-
-    // Initialize Wake Word Detection
-    useEffect(() => {
-        if (!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {
-            return;
-        }
-
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        wakeWordRecognitionRef.current = new SpeechRecognition();
-        wakeWordRecognitionRef.current.continuous = true;
-        wakeWordRecognitionRef.current.interimResults = false;
-        wakeWordRecognitionRef.current.lang = 'en-US';
-
-        wakeWordRecognitionRef.current.onresult = (event) => {
-            const lastResult = event.results[event.results.length - 1];
-            const spokenText = lastResult[0].transcript.toLowerCase().trim();
-            const confidence = lastResult[0].confidence;
-
-            console.log('Wake word detection:', spokenText, 'Confidence:', confidence);
-
-            // Improved wake word matching
-            const wakeWordLower = wakeWord.toLowerCase();
-            
-            // Check for exact match or close variations
-            const exactMatch = spokenText === wakeWordLower;
-            const containsMatch = spokenText.includes(wakeWordLower);
-            
-            // Also check word-by-word similarity
-            const wakeWordParts = wakeWordLower.split(' ');
-            const spokenParts = spokenText.split(' ');
-            const wordMatch = wakeWordParts.every(word => 
-                spokenParts.some(spoken => spoken.includes(word) || word.includes(spoken))
-            );
-
-            const isWakeWordDetected = exactMatch || (containsMatch && confidence >= sensitivity) || 
-                                      (wordMatch && confidence >= sensitivity - 0.1);
-
-            if (isWakeWordDetected) {
-                console.log('✅ Wake word "' + wakeWord + '" detected!');
-                toast.success(`🎤 Wake word "${wakeWord}" detected!`);
-                startListening();
-            }
-        };
-
-        wakeWordRecognitionRef.current.onerror = (event) => {
-            if (event.error !== 'no-speech' && event.error !== 'aborted') {
-                console.error('Wake word detection error:', event.error);
-            }
-        };
-
-        wakeWordRecognitionRef.current.onend = () => {
-            // Restart wake word listening if still enabled
-            if (wakeWordEnabled && wakeWordListening) {
-                try {
-                    wakeWordRecognitionRef.current.start();
-                } catch (e) {
-                    console.log('Wake word restart delayed');
-                    setTimeout(() => {
-                        if (wakeWordEnabled && wakeWordListening) {
-                            wakeWordRecognitionRef.current.start();
-                        }
-                    }, 100);
-                }
-            }
-        };
-
-        return () => {
-            if (wakeWordRecognitionRef.current) {
-                wakeWordRecognitionRef.current.stop();
-            }
-        };
-    }, [wakeWord, sensitivity, wakeWordEnabled, wakeWordListening]);
-
-    // Start/Stop Wake Word Listening
-    const toggleWakeWord = () => {
-        if (!wakeWordEnabled) {
-            // Enable wake word
-            setWakeWordEnabled(true);
-            setWakeWordListening(true);
-            try {
-                wakeWordRecognitionRef.current.start();
-                toast.success(`👂 Listening for "${wakeWord}"...`);
-            } catch (error) {
-                console.error('Failed to start wake word:', error);
-                toast.error('Failed to start wake word detection');
-                setWakeWordEnabled(false);
-                setWakeWordListening(false);
-            }
-        } else {
-            // Disable wake word
-            setWakeWordEnabled(false);
-            setWakeWordListening(false);
-            if (wakeWordRecognitionRef.current) {
-                wakeWordRecognitionRef.current.stop();
-            }
-            toast.success('Wake word detection stopped');
-        }
-    };
-
-    // Get AI Response from Backend
-    const getAiResponse = async (text) => {
-        setGettingAiResponse(true);
-        try {
-            console.log('Sending to AI:', text);
-            
-            const response = await api.post('/voice/query', {
-                text: text,
-                useOnline: false
-            });
-
-            console.log('AI Response:', response.data);
-
-            const aiReply = response.data.response;
-            setAiResponse(aiReply);
-            toast.success('🤖 AI responded!');
-            
-            // Auto-play AI response
-            speakText(aiReply);
-            
-        } catch (error) {
-            console.error('Error getting AI response:', error);
-            toast.error(error.response?.data?.error || 'Failed to get AI response');
-        } finally {
-            setGettingAiResponse(false);
-        }
-    };
-
-    const startListening = async () => {
-        try {
-            // Stop wake word detection temporarily
-            if (wakeWordEnabled && wakeWordRecognitionRef.current) {
-                wakeWordRecognitionRef.current.stop();
-                setWakeWordListening(false);
-            }
-
-            setListening(true);
-            setTranscript('');
-            setInterimTranscript('');
-            setAiResponse('');
-
-            // Start backend session
-            const response = await api.post('/voice/start');
-            setSessionId(response.data.sessionId);
-
-            // Start browser speech recognition
-            if (recognitionRef.current) {
-                recognitionRef.current.start();
-                toast.success('🎤 Listening... Speak now!');
-            }
-        } catch (error) {
-            console.error('Error starting voice:', error);
-            toast.error('Failed to start listening');
-            setListening(false);
-            
-            // Resume wake word if it was enabled
-            if (wakeWordEnabled) {
-                setWakeWordListening(true);
-                wakeWordRecognitionRef.current.start();
-            }
-        }
-    };
-
+    // --- MAIN STOP FUNCTION ---
     const stopListening = async () => {
+        // Clear silence timer if it's pending
+        if (silenceTimer.current) clearTimeout(silenceTimer.current);
+
+        // Allow stopping if we are technically "listening" OR if we have a transcript pending
+        if (!listening && !transcript) return;
+
         try {
             console.log('=== STOP LISTENING ===');
-            console.log('Transcript:', transcript);
-            console.log('Interim:', interimTranscript);
-            
             const finalTranscript = (transcript + ' ' + interimTranscript).trim();
-            console.log('Final:', finalTranscript);
-
+            
             // Stop browser speech recognition
             if (recognitionRef.current) {
                 recognitionRef.current.stop();
@@ -256,14 +55,13 @@ const VoiceInput = () => {
             setListening(false);
             setInterimTranscript('');
 
+            // If empty, just resume wake word
             if (!finalTranscript) {
                 toast.error('No speech detected. Try speaking longer.');
-                
-                // Resume wake word listening if enabled
                 if (wakeWordEnabled) {
                     setWakeWordListening(true);
                     setTimeout(() => {
-                        wakeWordRecognitionRef.current.start();
+                        wakeWordRecognitionRef.current?.start();
                     }, 500);
                 }
                 return;
@@ -288,7 +86,7 @@ const VoiceInput = () => {
             if (wakeWordEnabled) {
                 setTimeout(() => {
                     setWakeWordListening(true);
-                    wakeWordRecognitionRef.current.start();
+                    wakeWordRecognitionRef.current?.start();
                 }, 1000);
             }
 
@@ -296,89 +94,271 @@ const VoiceInput = () => {
             console.error('Error stopping voice:', error);
             toast.error('Failed to process speech');
             setProcessing(false);
-            
+            setListening(false);
+
             // Resume wake word on error
             if (wakeWordEnabled) {
                 setWakeWordListening(true);
                 setTimeout(() => {
-                    wakeWordRecognitionRef.current.start();
+                    wakeWordRecognitionRef.current?.start();
                 }, 500);
             }
         }
     };
 
-    const speakText = (text) => {
-        if (!text) {
-            toast.error('No text to speak');
-            return;
-        }
+    // 🔧 FIX 3: Keep the Ref updated with the latest version of the function
+    // This runs on every render to ensure the timer calls the FRESH function
+    stopListeningRef.current = stopListening;
 
+
+    // --- START FUNCTION ---
+    async function startListening() {
         try {
-            synthRef.current.cancel();
-
-            const utterance = new SpeechSynthesisUtterance(text);
-            utterance.rate = 1.0;
-            utterance.pitch = 1.0;
-            utterance.volume = 1.0;
-
-            const voices = synthRef.current.getVoices();
-            const englishVoice = voices.find(voice => voice.lang.startsWith('en')) || voices[0];
-            if (englishVoice) {
-                utterance.voice = englishVoice;
+            // Stop wake word temporarily
+            if (wakeWordEnabled && wakeWordRecognitionRef.current) {
+                wakeWordRecognitionRef.current.stop();
+                setWakeWordListening(false);
             }
 
-            utterance.onstart = () => {
-                toast.success('🔊 Playing audio...');
+            setListening(true);
+            setTranscript('');
+            setInterimTranscript('');
+            setAiResponse('');
+
+            // Backend start
+            const response = await api.post('/voice/start');
+            setSessionId(response.data.sessionId);
+
+            // Setup Event Listeners (Only once)
+            if (!recognitionRef.current._eventsBound) {
+                
+                recognitionRef.current.onresult = (event) => {
+                    let interim = '';
+                    let final = '';
+
+                    for (let i = event.resultIndex; i < event.results.length; i++) {
+                        const txt = event.results[i][0].transcript;
+                        if (event.results[i].isFinal) final += txt + ' ';
+                        else interim += txt;
+                    }
+
+                    if (final) setTranscript(prev => prev + final);
+                    setInterimTranscript(interim);
+
+                    // --- SILENCE DETECTION LOGIC ---
+                    
+                    // 1. Clear existing timer (user is still talking)
+                    if (silenceTimer.current) clearTimeout(silenceTimer.current);
+
+                    // 2. Set new timer. If no speech for 1.5s, trigger STOP via REF
+                    silenceTimer.current = setTimeout(() => {
+                        console.log("Silence detected. Stopping...");
+                        
+                        // 🔧 FIX 4: Call via Ref to avoid Stale Closure
+                        if (stopListeningRef.current) {
+                            stopListeningRef.current();
+                        }
+                    }, 1500); 
+                };
+
+                // Handle manual browser stops
+                recognitionRef.current.onend = () => {
+                    // We don't want to stop here automatically unless the user actually finished
+                    // The silence timer usually handles the logic, but we clear it just in case
+                    if (silenceTimer.current) clearTimeout(silenceTimer.current);
+                };
+
+                recognitionRef.current._eventsBound = true;
+            }
+
+            // Start Mic
+            recognitionRef.current.start();
+            toast.success('🎤 Listening... Speak now!');
+            
+        } catch (error) {
+            console.error('Error starting voice:', error);
+            toast.error('Failed to start listening');
+            setListening(false);
+
+            if (wakeWordEnabled && wakeWordRecognitionRef.current) {
+                setWakeWordListening(true);
+                wakeWordRecognitionRef.current.start();
+            }
+        }
+    }
+
+
+    // --- INITIALIZATION EFFECTS ---
+
+    // Initialize Main Speech Recognition
+    useEffect(() => {
+        if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            recognitionRef.current = new SpeechRecognition();
+            recognitionRef.current.continuous = true;
+            recognitionRef.current.interimResults = true;
+            recognitionRef.current.lang = 'en-US';
+            
+            // Note: onresult is assigned in startListening to handle closure scope
+
+            recognitionRef.current.onerror = (event) => {
+                console.error('Speech recognition error:', event.error);
+                if (event.error !== 'no-speech') {
+                    toast.error('Speech error: ' + event.error);
+                }
+                setListening(false);
             };
 
-            utterance.onerror = (event) => {
-                console.error('Speech synthesis error:', event);
-                toast.error('Failed to play audio');
-            };
+        } else {
+            toast.error('Speech recognition not supported in this browser');
+        }
 
+        return () => {
+            if (recognitionRef.current) recognitionRef.current.stop();
+            if (silenceTimer.current) clearTimeout(silenceTimer.current);
+        };
+    }, []);
+
+    // Initialize Wake Word Detection
+    useEffect(() => {
+        if (!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) return;
+
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        wakeWordRecognitionRef.current = new SpeechRecognition();
+        wakeWordRecognitionRef.current.continuous = true;
+        wakeWordRecognitionRef.current.interimResults = false;
+        wakeWordRecognitionRef.current.lang = 'en-US';
+
+        wakeWordRecognitionRef.current.onresult = (event) => {
+            const lastResult = event.results[event.results.length - 1];
+            const spokenText = lastResult[0].transcript.toLowerCase().trim();
+            const confidence = lastResult[0].confidence;
+
+            // Improved wake word matching
+            const wakeWordLower = wakeWord.toLowerCase();
+            const exactMatch = spokenText === wakeWordLower;
+            const containsMatch = spokenText.includes(wakeWordLower);
+            const wakeWordParts = wakeWordLower.split(' ');
+            const spokenParts = spokenText.split(' ');
+            const wordMatch = wakeWordParts.every(word =>
+                spokenParts.some(spoken => spoken.includes(word) || word.includes(spoken))
+            );
+
+            const isWakeWordDetected = exactMatch || (containsMatch && confidence >= sensitivity) ||
+                (wordMatch && confidence >= sensitivity - 0.1);
+
+            if (isWakeWordDetected) {
+                console.log('✅ Wake word detected!');
+                toast.success(`🎤 Wake word detected!`);
+                startListening();
+            }
+        };
+
+        wakeWordRecognitionRef.current.onerror = (event) => {
+            if (event.error !== 'no-speech' && event.error !== 'aborted') {
+                console.error('Wake word detection error:', event.error);
+            }
+        };
+
+        wakeWordRecognitionRef.current.onend = () => {
+            if (wakeWordEnabled && wakeWordListening) {
+                try {
+                    wakeWordRecognitionRef.current.start();
+                } catch (e) {
+                    setTimeout(() => {
+                        if (wakeWordEnabled && wakeWordListening) {
+                            wakeWordRecognitionRef.current?.start();
+                        }
+                    }, 100);
+                }
+            }
+        };
+
+        return () => {
+            if (wakeWordRecognitionRef.current) wakeWordRecognitionRef.current.stop();
+        };
+    }, [wakeWord, sensitivity]); // Re-init if wake word changes
+
+
+    // --- HELPER FUNCTIONS ---
+
+    const toggleWakeWord = () => {
+        if (!wakeWordEnabled) {
+            setWakeWordEnabled(true);
+            setWakeWordListening(true);
+            try {
+                wakeWordRecognitionRef.current.start();
+                toast.success(`👂 Listening for "${wakeWord}"...`);
+            } catch (error) {
+                setWakeWordEnabled(false);
+                setWakeWordListening(false);
+            }
+        } else {
+            setWakeWordEnabled(false);
+            setWakeWordListening(false);
+            if (wakeWordRecognitionRef.current) wakeWordRecognitionRef.current.stop();
+            toast.success('Wake word detection stopped');
+        }
+    };
+
+    const getAiResponse = async (text) => {
+        setGettingAiResponse(true);
+        try {
+            const response = await api.post('/voice/query', {
+                text: text,
+                useOnline: false
+            });
+            const aiReply = response.data.response;
+            setAiResponse(aiReply);
+            toast.success('🤖 AI responded!');
+            speakText(aiReply);
+        } catch (error) {
+            console.error('Error getting AI response:', error);
+            toast.error(error.response?.data?.error || 'Failed to get AI response');
+        } finally {
+            setGettingAiResponse(false);
+        }
+    };
+
+    const speakText = (text) => {
+        if (!text) return;
+        try {
+            synthRef.current.cancel();
+            const utterance = new SpeechSynthesisUtterance(text);
+            const voices = synthRef.current.getVoices();
+            const englishVoice = voices.find(voice => voice.lang.startsWith("en")) || voices[0];
+            if (englishVoice) utterance.voice = englishVoice;
             synthRef.current.speak(utterance);
         } catch (error) {
             console.error('Speak error:', error);
-            toast.error('Failed to play audio');
         }
     };
 
-    const playAudio = () => {
-        speakText(transcript);
-    };
+    const playAudio = () => speakText(transcript);
 
     const handleFileUpload = async (event) => {
         const file = event.target.files[0];
         if (!file) return;
-
         if (!file.type.startsWith('audio/')) {
             toast.error('Please upload an audio file');
             return;
         }
-
         setUploading(true);
-        
         try {
             const formData = new FormData();
             formData.append('audio', file);
             formData.append('useOffline', 'true');
             formData.append('language', 'en');
-
             const response = await api.post('/voice/transcribe', formData, {
-                headers: {
-                    'Content-Type': 'multipart/form-data'
-                }
+                headers: { 'Content-Type': 'multipart/form-data' }
             });
-
             const transcribedText = response.data.text;
             setTranscript(transcribedText);
             toast.success(`✅ Transcribed with ${response.data.service}`);
-            
             await getAiResponse(transcribedText);
-            
         } catch (error) {
             console.error('Upload error:', error);
-            toast.error('Failed to transcribe audio file');
+            toast.error('Failed to transcribe');
         } finally {
             setUploading(false);
         }
@@ -420,11 +400,10 @@ const VoiceInput = () => {
                     </h2>
                     <button
                         onClick={toggleWakeWord}
-                        className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-                            wakeWordEnabled
+                        className={`px-4 py-2 rounded-lg font-medium transition-colors ${wakeWordEnabled
                                 ? 'bg-green-600 hover:bg-green-700 text-white'
                                 : 'bg-slate-700 hover:bg-slate-600 text-white'
-                        }`}
+                            }`}
                     >
                         {wakeWordEnabled ? '✓ Enabled' : 'Enable Wake Word'}
                     </button>
@@ -468,9 +447,6 @@ const VoiceInput = () => {
                             className="w-full"
                             disabled={wakeWordEnabled}
                         />
-                        <p className="text-xs text-slate-400 mt-1">
-                            Higher = more accurate (0.85 recommended for "Hey Electron")
-                        </p>
                     </div>
                 </div>
             </div>
@@ -535,19 +511,12 @@ const VoiceInput = () => {
                         </p>
                     )}
                     {processing && (
-                        <p className="text-yellow-400 font-medium">
-                            Processing speech...
-                        </p>
+                        <p className="text-yellow-400 font-medium">Processing speech...</p>
                     )}
                     {gettingAiResponse && (
                         <p className="text-purple-400 font-medium flex items-center justify-center gap-2">
                             <Loader className="w-4 h-4 animate-spin" />
                             AI is thinking...
-                        </p>
-                    )}
-                    {!listening && !processing && !gettingAiResponse && transcript && (
-                        <p className="text-indigo-400 font-medium">
-                            ✅ {transcript.split(' ').length} words transcribed
                         </p>
                     )}
                 </div>
@@ -578,7 +547,7 @@ const VoiceInput = () => {
                         ) : (
                             <div className="flex items-center justify-center h-full">
                                 <p className="text-slate-400 italic text-center">
-                                    {wakeWordEnabled 
+                                    {wakeWordEnabled
                                         ? `Say "${wakeWord}" or click the microphone`
                                         : 'Click the microphone button to start'
                                     }
@@ -616,29 +585,6 @@ const VoiceInput = () => {
                                 Replay AI Response
                             </button>
                         )}
-                    </div>
-                )}
-
-                {/* Instructions */}
-                <div className="mt-6 p-4 bg-slate-900 rounded-lg border border-slate-700">
-                    <h3 className="text-white font-medium mb-2">How to use:</h3>
-                    <ul className="text-slate-400 text-sm space-y-1">
-                        <li>✓ Enable wake word and say "{wakeWord}" anytime to activate</li>
-                        <li>✓ Or click the <span className="text-red-400">red microphone</span> manually</li>
-                        <li>✓ Speak your question clearly</li>
-                        <li>✓ Click <span className="text-slate-300">square button</span> to stop or wait for auto-stop</li>
-                        <li>✓ AI will automatically respond</li>
-                        <li>✓ Wake word detection resumes after each interaction</li>
-                    </ul>
-                </div>
-
-                {/* Browser Support Notice */}
-                {!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) && (
-                    <div className="mt-4 p-4 bg-red-900/20 border border-red-500 rounded-lg">
-                        <p className="text-red-400 text-sm">
-                            ⚠️ Speech recognition is not supported in this browser.
-                            Please use Chrome, Edge, or Safari.
-                        </p>
                     </div>
                 )}
             </div>
